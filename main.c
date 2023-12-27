@@ -15,6 +15,7 @@ Ognuno dei processi controlla se l'altro va risvegliato
 */
 
 #define N 100
+#define ITER 100000
 
 typedef struct {
     u_int64_t count;
@@ -24,6 +25,10 @@ typedef struct {
 Buffer buffer;
 
 pthread_t producer_id,consumer_id;
+
+pthread_mutex_t mutex;
+
+pthread_cond_t condc,condp;
 
 void new_buffer(void) {
     buffer.count = 0;
@@ -43,29 +48,23 @@ u_int64_t produce_item(void) {
     return buffer.count;
 }
 
-u_int64_t remove_item(void) {
+u_int64_t read_item(void) {
     return buffer.ptr[buffer.count];
-}
-
-void sleep() {
-    //TODO
-}
-
-void wakeup(pthread_t thread_id) {
-    //TODO
 }
 
 void *producer_deamon(void* arg) {
     u_int64_t item;
 
-    for(;;) {
+    for(int i = 0;i < ITER; i++) {
         item = produce_item();
-        if (buffer.count == N)
-            sleep();
+        pthread_mutex_lock(&mutex);
+        while (buffer.count == N)
+            pthread_cond_wait(&condp,&mutex);
         insert_item(item);
         buffer.count++;
-        if(buffer.count == 1)
-            wakeup(consumer_id);
+        printf("Write: %llu\n",item);
+        pthread_cond_signal(&condc);
+        pthread_mutex_unlock(&mutex);
         pthread_yield_np();
     }
 }
@@ -73,29 +72,38 @@ void *producer_deamon(void* arg) {
 void *consumer_deamon(void* arg) {
     u_int64_t item;
 
-    for(;;) {
-        if (buffer.count == 0)
-            sleep();
-        item = remove_item();
+    for(int i = 0;i < ITER; i++) {
+        pthread_mutex_lock(&mutex);
+        while (buffer.count == 0)
+            pthread_cond_wait(&condc,&mutex);
+        item = read_item();
         buffer.count--;
-        if (buffer.count == N - 1)
-            wakeup(producer_id);
-        printf("%llu\n",item);
+        printf("Read: %llu\n",item);
+        pthread_cond_signal(&condp);
+        pthread_mutex_unlock(&mutex);
         pthread_yield_np();
     }
 }
 
 int main(void) {
     new_buffer();
+    pthread_mutex_init(&mutex, 0);
+    pthread_cond_init(&condc,0);
+    pthread_cond_init(&condp,0);
     int err_consumer,err_producer;
     err_consumer = pthread_create(&consumer_id, NULL,consumer_deamon,NULL);
     err_producer = pthread_create(&producer_id, NULL,producer_deamon,NULL);
     if (err_consumer | err_producer) {
         fprintf(stderr, "Fatal error: could not create threads for consumer or producer");
     } else {
-        printf("Thread id consumer: %llu",(u_int64_t)consumer_id);
-        printf("Thread id producer: %llu",(u_int64_t)producer_id);
+        printf("Thread id consumer: %llu\n",(u_int64_t)consumer_id);
+        printf("Thread id producer: %llu\n",(u_int64_t)producer_id);
     }
+    pthread_join(consumer_id,NULL);
+    pthread_join(producer_id,NULL);
+    pthread_mutex_destroy(&mutex);
+    pthread_cond_destroy(&condc);
+    pthread_cond_destroy(&condp);
     realese_buffer();
     return 0;
 }
